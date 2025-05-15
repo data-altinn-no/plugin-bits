@@ -1,0 +1,16 @@
+{
+    "folders": [
+      {
+        "path": "src/Dan.Plugin.Arbeidstilsynet"
+      },
+      {
+        "path": "test/Dan.Plugin.Arbeidstilsynet.Test"
+      }
+    ],
+    "extensions": {
+      "recommendations": [
+        "ms-dotnettools.csharp",
+        "github.vscode-pull-request-github"
+      ]
+    }
+}
