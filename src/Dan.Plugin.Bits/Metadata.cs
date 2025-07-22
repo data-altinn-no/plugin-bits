@@ -5,20 +5,21 @@ using Dan.Common;
 using Dan.Common.Enums;
 using Dan.Common.Interfaces;
 using Dan.Common.Models;
-using Dan.Plugin.DATASOURCENAME.Config;
-using Dan.Plugin.DATASOURCENAME.Models;
+using Dan.Plugin.Bits.Config;
+using Dan.Plugin.Bits.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Newtonsoft.Json.Schema.Generation;
-using NJsonSchema;
+using Newtonsoft.Json;
 
-namespace Dan.Plugin.DATASOURCENAME;
+namespace Dan.Plugin.Bits;
 
 /// <summary>
 /// All plugins must implement IEvidenceSourceMetadata, which describes that datasets returned by this plugin. An example is implemented below.
 /// </summary>
 public class Metadata : IEvidenceSourceMetadata
 {
+    private const string ServiceContext = "Bits kontrollinformasjon";
+    private const string Scope = "altinn:dataaltinnno/kontrollinformasjon";
     /// <summary>
     ///
     /// </summary>
@@ -27,46 +28,25 @@ public class Metadata : IEvidenceSourceMetadata
     {
         return
         [
-            new EvidenceCode
+            new EvidenceCode()
             {
-                EvidenceCodeName = PluginConstants.SimpleDatasetName,
+                EvidenceCodeName = PluginConstants.Kontrollinformasjon,
                 EvidenceSource = PluginConstants.SourceName,
+                BelongsToServiceContexts = [ServiceContext],
                 Values =
                 [
-                    new EvidenceValue
+                    new EvidenceValue()
                     {
-                        EvidenceValueName = "field1",
-                        ValueType = EvidenceValueType.String
-                    },
-
-                    new EvidenceValue
-                    {
-                        EvidenceValueName = "field2",
-                        ValueType = EvidenceValueType.String
-                    }
-                ]
-            },
-            new EvidenceCode
-            {
-                EvidenceCodeName = PluginConstants.RichDatasetName,
-                EvidenceSource = PluginConstants.SourceName,
-                Values =
-                [
-                    new EvidenceValue
-                    {
-                        // Convention for rich datasets with a single JSON model is to use the value name "default"
-                        EvidenceValueName = "default",
+                        EvidenceValueName = PluginConstants.DefaultValue,
                         ValueType = EvidenceValueType.JsonSchema,
-                        JsonSchemaDefintion = JsonSchema
-                            .FromType<ExampleModel>()
-                            .ToJson(Newtonsoft.Json.Formatting.Indented)
+                        JsonSchemaDefintion = EvidenceValue.SchemaFromObject<EndpointsList>(Formatting.Indented)
                     }
                 ],
                 AuthorizationRequirements =
                 [
-                    new MaskinportenScopeRequirement
+                    new MaskinportenScopeRequirement()
                     {
-                        RequiredScopes = ["altinn:dataaltinnno/somescope"]
+                        RequiredScopes = [Scope]
                     }
                 ]
             }

@@ -11,6 +11,8 @@
     "DefaultCircuitBreakerOpenCircuitTimeSeconds": "10",
     "DefaultCircuitBreakerFailureBeforeTripping": "4",
     "SafeHttpClientTimeout": "30",
-    "EndpointUrl": "https://example.com"
+    "GithubPatName": "",
+    "KeyVaultName": "",
+    "EndpointsResourceFile": ""
   }
 }
