@@ -1,4 +1,4 @@
-name: Deploy dan-plugin-DATASOURCENAME
+name: Deploy dan-plugin-bits
 
 on:
  push:
