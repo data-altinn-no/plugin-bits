@@ -1,4 +1,4 @@
-﻿namespace Dan.Plugin.DATASOURCENAME.Config;
+﻿namespace Dan.Plugin.Bits.Config;
 
 public static class PluginConstants
 {
@@ -10,9 +10,10 @@ public static class PluginConstants
     public const int ErrorUnableToParseResponse = 1004;
 
     // The datasets must supply a human-readable source description from which they originate. Individual fields might come from different sources, and this string should reflect that (ie. name all possible sources).
-    public const string SourceName = "Digitaliseringsdirektoratet";
+    public const string SourceName = "BITS";
 
     // The function names (ie. HTTP endpoint names) and the dataset names must match. Using constants to avoid errors.
-    public const string SimpleDatasetName = "SimpleDataset";
-    public const string RichDatasetName = "RichDataset";
+    public const string Kontrollinformasjon = "Kontrollinformasjon";
+
+    public const string DefaultValue = "default";
 }
