@@ -48,4 +48,34 @@ public class Plugin(
             throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
         }
     }
+
+    [Function(PluginConstants.KontrollinformasjonV2)]
+    public async Task<HttpResponseData> GetKontrollinformasjonv2(
+        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
+        FunctionContext context)
+    {
+        return await EvidenceSourceResponse.CreateResponse(req, GetEvidenceValuesKontrollinformasjonv2);
+    }
+
+    private async Task<List<EvidenceValue>> GetEvidenceValuesKontrollinformasjonv2()
+    {
+        try
+        {
+            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Kontrollinformasjon);
+            var endpoints = await controlInformationService.GetBankEndpointsWithDates();
+            var json = JsonConvert.SerializeObject(endpoints);
+            ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
+            return ecb.GetEvidenceValues();
+        }
+        catch (JsonSerializationException e)
+        {
+            logger.LogError(e, "Unable to parse bank endpoints response: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUnableToParseResponse, e.Message, e);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Unable to fetch bank endpoints: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
+        }
+    }
 }

@@ -1,4 +1,4 @@
-name: Deploy dan-plugin-DATASOURCENAME
+name: Deploy dan-plugin-bits
 
 on:
  push:
@@ -12,7 +12,7 @@ jobs:
  run:
    uses: data-altinn-no/deploy-actions/.github/workflows/dan-deploy-flow.yml@main
    with:
-     artifact_name: 'dan-plugin-DATASOURCENAME' # Can be omitted, defaults to 'artifact'
+     artifact_name: 'dan-plugin-bits' # Can be omitted, defaults to 'artifact'
      function_project_path: 'src/Dan.Plugin.DATASOURCENAME'
    secrets:
      function_app_name: ${{ secrets.FUNCTIONAPP_NAME }}

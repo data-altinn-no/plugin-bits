@@ -1,4 +1,4 @@
-﻿namespace Dan.Plugin.Bits.Config;
+namespace Dan.Plugin.Bits.Config;
 
 public static class PluginConstants
 {
@@ -14,6 +14,8 @@ public static class PluginConstants
 
     // The function names (ie. HTTP endpoint names) and the dataset names must match. Using constants to avoid errors.
     public const string Kontrollinformasjon = "Kontrollinformasjon";
+
+    public const string KontrollinformasjonV2 = "KontrollinformasjonUtvidet";
 
     public const string DefaultValue = "default";
 }

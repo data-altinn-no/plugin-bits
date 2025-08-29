@@ -13,7 +13,7 @@ var host = new HostBuilder()
     {
         services.Configure<Settings>(context.Configuration);
         services.AddHttpClient();
-        services.AddTransient<IMemoryCacheProvider, MemoryCacheProvider>();
+        services.AddSingleton<IMemoryCacheProvider, MemoryCacheProvider>();
         services.AddTransient<IControlInformationService, ControlInformationService>();
     })
     .Build();

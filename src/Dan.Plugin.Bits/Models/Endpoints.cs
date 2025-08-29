@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using FileHelpers;
 using Newtonsoft.Json;
 
@@ -16,6 +17,16 @@ public class EndpointV2
     public string Url { get; set; }
 
     public string Version { get; set; }
+
+    [FieldQuoted(QuoteMode.OptionalForBoth)]
+    [FieldOptional]
+    [FieldConverter(typeof(NullableDateTimeOffsetConverter))]
+    public DateTimeOffset? FromDate { get; set; }
+
+    [FieldQuoted(QuoteMode.OptionalForBoth)]
+    [FieldOptional]
+    [FieldConverter(typeof(NullableDateTimeOffsetConverter))]
+    public DateTimeOffset? ToDate { get; set; }
 }
 
 public class EndpointsList
@@ -43,4 +54,12 @@ public class EndpointExternal
 
     [JsonProperty("env")]
     public string Env { get; set; }
+
+    [JsonProperty("fromDate", NullValueHandling=NullValueHandling.Ignore, DefaultValueHandling = DefaultValueHandling.Ignore)]
+    public DateTimeOffset? FromDate { get; set; }
+
+    [JsonProperty("toDate", NullValueHandling = NullValueHandling.Ignore, DefaultValueHandling = DefaultValueHandling.Ignore)]
+    public DateTimeOffset? ToDate { get; set; }
+
+
 }

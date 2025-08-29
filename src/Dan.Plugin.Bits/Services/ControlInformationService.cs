@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -17,7 +18,8 @@ namespace Dan.Plugin.Bits.Services;
 
 public interface IControlInformationService
 {
-    Task<List<EndpointExternal>> GetBankEndpoints();
+    Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints();
+    Task<IReadOnlyList<EndpointExternal>> GetBankEndpointsWithDates();
 }
 
 public class ControlInformationService(
@@ -33,19 +35,52 @@ public class ControlInformationService(
     private const string EndpointsKey = "endpoints_key";
     private const int ErrorKeyTemp = 1;
 
-    public async Task<List<EndpointExternal>> GetBankEndpoints()
+    public async Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints()
     {
         var (hasCachedValue, endpoints) = await memCache.TryGetEndpoints(EndpointsKey);
 
         if (!hasCachedValue)
         {
+            logger.LogInformation("No endpoints found in cache");
             endpoints = await ReadEndpointsAndCache();
         }
 
-        return endpoints;
+        logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
+
+        //remove endpoints that are not currently active, they are returned only in KontrollinformasjonUtvidet
+        return endpoints.Where(x =>
+            (x.FromDate == null || x.FromDate <= DateTime.UtcNow) &&
+            (x.ToDate == null || x.ToDate >= DateTime.UtcNow))
+             .Select(x => new EndpointExternal
+             {
+                Env = x.Env,
+                OrgNo = x.OrgNo,
+                Url = x.Url,
+                Version = x.Version,
+                ToDate = null,
+                FromDate = null,
+                Name = x.Name
+             })
+            .ToList();
     }
 
-    private async Task<List<EndpointExternal>> ReadEndpointsAndCache()
+    public async Task<IReadOnlyList<EndpointExternal>> GetBankEndpointsWithDates()
+    {
+        var (hasCachedValue, endpoints) = await memCache.TryGetEndpoints(EndpointsKey);
+
+        if (!hasCachedValue)
+        {
+            logger.LogInformation("No endpoints found in cache");
+            endpoints = await ReadEndpointsAndCache();
+        }
+
+        logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
+        return endpoints.Where(x =>
+            (x.ToDate == null || x.ToDate >= DateTime.UtcNow)).ToList();
+    }
+
+
+    private async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache()
     {
         var file = await GetFileFromGithub();
         var engine = new DelimitedFileEngine<EndpointV2>(Encoding.UTF8);
@@ -56,7 +91,7 @@ public class ControlInformationService(
 
         if (engine.TotalRecords > 0 && endpoints.Count > 0)
         {
-            result = await memCache.SetEndpointsCache(EndpointsKey, endpoints, TimeSpan.FromMinutes(300));
+            result = memCache.SetEndpointsCache(EndpointsKey, endpoints, TimeSpan.FromMinutes(300));
             logger.LogInformation("Cache refresh completed - total of {totalRecords} cached", engine.TotalRecords);
         }
         else
