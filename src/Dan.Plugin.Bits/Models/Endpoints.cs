@@ -7,6 +7,7 @@ namespace Dan.Plugin.Bits.Models;
 
 [DelimitedRecord(",")]
 [IgnoreFirst]
+[IgnoreEmptyLines]
 public class EndpointV2
 {
     public string OrgNummer { get; set; }
