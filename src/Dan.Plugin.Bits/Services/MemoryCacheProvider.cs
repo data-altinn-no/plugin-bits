@@ -20,10 +20,10 @@ public class MemoryCacheProvider(IMemoryCache memoryCache, IOptions<Settings> se
 {
     private readonly Settings settings = settings.Value;
 
-    public Task<(bool success, IReadOnlyList<EndpointExternal> result)> TryGetEndpoints(string key)
+    public async Task<(bool success, IReadOnlyList<EndpointExternal> result)> TryGetEndpoints(string key)
     {
         var success = memoryCache.TryGetValue(key, out IReadOnlyList<EndpointExternal> result);
-        return Task.FromResult((success, result));
+        return (success, result);
     }
 
     public List<EndpointExternal> SetEndpointsCache(string key, List<EndpointV2> value, TimeSpan timeToLive)
@@ -41,10 +41,12 @@ public class MemoryCacheProvider(IMemoryCache memoryCache, IOptions<Settings> se
 
     private List<EndpointExternal> MapToExternal(List<EndpointV2> endpoints)
     {
+        var env = settings.UseTestEndpoints ? "test" : "prod";
+
         var query = from endpoint in endpoints
             select new EndpointExternal()
             {
-                Env = settings.UseTestEndpoints ? "test" : "prod",
+                Env = env,
                 Url = endpoint.Url,
                 Name = endpoint.Navn,
                 OrgNo = endpoint.OrgNummer,
