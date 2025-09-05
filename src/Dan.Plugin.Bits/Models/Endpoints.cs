@@ -33,7 +33,7 @@ public class EndpointV2
 public class EndpointsList
 {
     [JsonProperty("endpoints")]
-    public List<EndpointExternal> Endpoints { get; set; }
+    public IReadOnlyList<EndpointExternal> Endpoints { get; set; }
 
     [JsonProperty("total")]
     public int Total { get; set; }

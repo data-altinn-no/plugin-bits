@@ -49,6 +49,28 @@ public class Metadata : IEvidenceSourceMetadata
                         RequiredScopes = [Scope]
                     }
                 ]
+            },
+            new EvidenceCode()
+            {
+                EvidenceCodeName = PluginConstants.KontrollinformasjonV2,
+                EvidenceSource = PluginConstants.SourceName,
+                BelongsToServiceContexts = [ServiceContext],
+                Values =
+                [
+                    new EvidenceValue()
+                    {
+                        EvidenceValueName = PluginConstants.DefaultValue,
+                        ValueType = EvidenceValueType.JsonSchema,
+                        JsonSchemaDefintion = EvidenceValue.SchemaFromObject<EndpointsList>(Formatting.Indented)
+                    }
+                ],
+                AuthorizationRequirements =
+                [
+                    new MaskinportenScopeRequirement()
+                    {
+                        RequiredScopes = [Scope]
+                    }
+                ]
             }
         ];
     }

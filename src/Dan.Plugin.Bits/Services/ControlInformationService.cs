@@ -20,6 +20,8 @@ public interface IControlInformationService
 {
     Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints();
     Task<IReadOnlyList<EndpointExternal>> GetBankEndpointsWithDates();
+
+    Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache();
 }
 
 public class ControlInformationService(
@@ -80,26 +82,33 @@ public class ControlInformationService(
     }
 
 
-    private async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache()
+    public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache()
     {
-        var file = await GetFileFromGithub();
-        var engine = new DelimitedFileEngine<EndpointV2>(Encoding.UTF8);
-        var endpoints = engine.ReadString(file).ToList();
+        try { 
+            var file = await GetFileFromGithub();
+            var engine = new DelimitedFileEngine<EndpointV2>(Encoding.UTF8);
+            var endpoints = engine.ReadString(file).ToList();
 
-        List<EndpointExternal> result = [];
-        logger.LogInformation("Endpoints parsed from csv - {totalRecords} to be cached", engine.TotalRecords);
+            List<EndpointExternal> result = [];
+            logger.LogInformation("Endpoints parsed from csv - {totalRecords} to be cached", engine.TotalRecords);
 
-        if (engine.TotalRecords > 0 && endpoints.Count > 0)
-        {
-            result = memCache.SetEndpointsCache(EndpointsKey, endpoints, TimeSpan.FromMinutes(300));
-            logger.LogInformation("Cache refresh completed - total of {totalRecords} cached", engine.TotalRecords);
+            if (engine.TotalRecords > 0 && endpoints.Count > 0)
+            {
+                result = memCache.SetEndpointsCache(EndpointsKey, endpoints, TimeSpan.FromMinutes(300));
+                logger.LogInformation("Cache refresh completed - total of {totalRecords} cached", engine.TotalRecords);
+            }
+            else
+            {
+                logger.LogCritical("Plugin func-esbits no endpoints found in csv");
+            }
+
+            return result;
         }
-        else
+        catch (Exception ex)
         {
-            logger.LogCritical("Plugin func-esbits no endpoints found in csv");
+            logger.LogCritical(ex, "Unable to fetch or parse bank endpoints: {message}", ex.Message);
+            throw new EvidenceSourceTransientException(ErrorKeyTemp, "Banking endpoints are currently unavailable", ex);
         }
-
-        return result;
     }
 
     private async Task<string> GetFileFromGithub()
