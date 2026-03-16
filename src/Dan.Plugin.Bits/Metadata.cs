@@ -19,7 +19,8 @@ namespace Dan.Plugin.Bits;
 public class Metadata : IEvidenceSourceMetadata
 {
     private const string ServiceContext = "Bits kontrollinformasjon";
-    private const string Scope = "altinn:dataaltinnno/kontrollinformasjon";
+    private const string ScopeKontrollinformasjon = "altinn:dataaltinnno/kontrollinformasjon";
+    private const string ScopeUtleggspant = "altinn:dataaltinnno/utleggspant";
     /// <summary>
     ///
     /// </summary>
@@ -46,7 +47,29 @@ public class Metadata : IEvidenceSourceMetadata
                 [
                     new MaskinportenScopeRequirement()
                     {
-                        RequiredScopes = [Scope]
+                        RequiredScopes = [ScopeKontrollinformasjon]
+                    }
+                ]
+            },
+            new EvidenceCode()
+            {
+                EvidenceCodeName = PluginConstants.PantUtlegg,
+                EvidenceSource = PluginConstants.SourceName,
+                BelongsToServiceContexts = [ServiceContext],
+                Values =
+                [
+                    new EvidenceValue()
+                    {
+                        EvidenceValueName = PluginConstants.DefaultValue,
+                        ValueType = EvidenceValueType.JsonSchema,
+                        JsonSchemaDefintion = EvidenceValue.SchemaFromObject<EndpointsList>(Formatting.Indented)
+                    }
+                ],
+                AuthorizationRequirements =
+                [
+                    new MaskinportenScopeRequirement()
+                    {
+                        RequiredScopes = [ScopeUtleggspant]
                     }
                 ]
             },
@@ -68,7 +91,7 @@ public class Metadata : IEvidenceSourceMetadata
                 [
                     new MaskinportenScopeRequirement()
                     {
-                        RequiredScopes = [Scope]
+                        RequiredScopes = [ScopeKontrollinformasjon]
                     }
                 ]
             }

@@ -102,6 +102,36 @@ public class Plugin
         }
     }
 
+    [Function(PluginConstants.PantUtlegg)]
+    public async Task<HttpResponseData> PantUtlegg(
+    [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
+    FunctionContext context)
+    {
+        return await EvidenceSourceResponse.CreateResponse(req, GetEvidenceValuesPantUtlegg);
+    }
+
+    private async Task<List<EvidenceValue>> GetEvidenceValuesPantUtlegg()
+    {
+        try
+        {
+            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.PantUtlegg);
+            var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
+            var json = JsonConvert.SerializeObject(endpoints);
+            ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
+            return ecb.GetEvidenceValues();
+        }
+        catch (JsonSerializationException e)
+        {
+            _logger.LogError(e, "Unable to parse bank endpoints response: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUnableToParseResponse, e.Message, e);
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "Unable to fetch bank endpoints: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
+        }
+    }
+
     [Function("OppdaterKontrollinformasjon")]
     public async Task<HttpResponseData> UpdateKontrollinformasjon(
            [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
@@ -112,7 +142,19 @@ public class Plugin
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });
         return response;
-    } 
+    }
 
-    
+    [Function("OppdaterPantUtlegg")]
+    public async Task<HttpResponseData> OppdaterPantUtlegg(
+       [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
+       FunctionContext context)
+    {
+        var endpoints = await _controlInformationService.ReadEndpointsAndCachePantUtlegg();
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });
+        return response;
+    }
+
+
 }

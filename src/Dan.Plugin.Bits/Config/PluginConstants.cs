@@ -17,5 +17,8 @@ public static class PluginConstants
 
     public const string KontrollinformasjonV2 = "KontrollinformasjonUtvidet";
 
+    public const string PantUtlegg = "PantUtlegg";
+
+
     public const string DefaultValue = "default";
 }
