@@ -13,6 +13,8 @@ public class Settings
     public bool UseTestEndpoints { get; init; }
     public string EndpointsResourceFile { get; init; }
 
+    public string PantUtleggResourceFile { get; init; }
+
     private static string KeyVaultName => Environment.GetEnvironmentVariable("KeyVaultName");
     private string GithubPatValue { get; init; }
     public string GithubPatName { get; init; }
