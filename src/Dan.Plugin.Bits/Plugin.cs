@@ -23,14 +23,14 @@ namespace Dan.Plugin.Bits;
 
 public class Plugin
 
-{ 
+{
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly HttpClient _client;
     private readonly Settings _settings;
     private readonly IMemoryCacheProvider _memCache;
     private readonly IControlInformationService _controlInformationService;
-    private const string ENDPOINTS_KEY = "endpoints_key";   
+    private const string ENDPOINTS_KEY = "endpoints_key";
 
 
     public Plugin(IOptions<Settings> settings, IControlInformationService controlInformationService, ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory, IMemoryCacheProvider memCache)
@@ -115,7 +115,7 @@ public class Plugin
         try
         {
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.PantUtlegg);
-            var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
+            var endpoints = await _controlInformationService.GetPantUtlegg();
             var json = JsonConvert.SerializeObject(endpoints);
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
             return ecb.GetEvidenceValues();
