@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http;
-using System.Text;
 using System.Threading.Tasks;
 using Dan.Common.Exceptions;
 using Dan.Common.Models;
@@ -11,12 +10,12 @@ using Dan.Common.Util;
 using Dan.Plugin.Bits.Config;
 using Dan.Plugin.Bits.Models;
 using Dan.Plugin.Bits.Services;
-using FileHelpers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
 namespace Dan.Plugin.Bits;
@@ -31,6 +30,7 @@ public class Plugin
     private readonly IMemoryCacheProvider _memCache;
     private readonly IControlInformationService _controlInformationService;
     private const string ENDPOINTS_KEY = "endpoints_key";
+    private static readonly Regex NorwegianOrganizationNumberPattern = new(@"^\d{9}$", RegexOptions.Compiled);
 
 
     public Plugin(IOptions<Settings> settings, IControlInformationService controlInformationService, ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory, IMemoryCacheProvider memCache)
@@ -122,11 +122,11 @@ public class Plugin
         try
         {
             var evidenceHarvesterRequest = await req.ReadFromJsonAsync<EvidenceHarvesterRequest>();
-            var orgNo = evidenceHarvesterRequest?.SubjectParty.NorwegianOrganizationNumber;
+            var orgNo = evidenceHarvesterRequest?.SubjectParty?.NorwegianOrganizationNumber;
 
-            if (string.IsNullOrWhiteSpace(orgNo))
+            if (string.IsNullOrWhiteSpace(orgNo) || !NorwegianOrganizationNumberPattern.IsMatch(orgNo))
             {
-                throw new EvidenceSourcePermanentClientException(PluginConstants.ErrorInvalidInput, "Organisasjonsnummer mangler i forespørselen");
+                throw new EvidenceSourcePermanentClientException(PluginConstants.ErrorInvalidInput, "Organisasjonsnummer mangler eller er ugyldig i forespørselen");
             }
 
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Limitations);
