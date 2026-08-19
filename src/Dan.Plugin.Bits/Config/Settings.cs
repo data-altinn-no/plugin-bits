@@ -24,4 +24,5 @@ public class Settings
         get => GithubPatValue ?? new PluginKeyVault(KeyVaultName).Get(GithubPatName).Result;
         init => GithubPatValue = value;
     }
+    public string LimitationsResourceFile { get; init; }
 }

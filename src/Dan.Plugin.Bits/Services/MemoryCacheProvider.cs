@@ -12,8 +12,10 @@ namespace Dan.Plugin.Bits.Services;
 public interface IMemoryCacheProvider
 {
     public Task<(bool success, IReadOnlyList<EndpointExternal> result)> TryGetEndpoints(string key);
+    public Task<(bool success, IReadOnlyList<Limitation> result)> TryGetLimitations(string key);
 
     public List<EndpointExternal> SetEndpointsCache(string key, List<EndpointV2> value, TimeSpan timeToLive);
+    public List<Limitation> SetLimitationsCache(string key, List<Limitation> value, TimeSpan timeToLive);
 }
 
 public class MemoryCacheProvider(IMemoryCache memoryCache, IOptions<Settings> settings) : IMemoryCacheProvider
@@ -26,6 +28,12 @@ public class MemoryCacheProvider(IMemoryCache memoryCache, IOptions<Settings> se
         return (success, result);
     }
 
+    public async Task<(bool success, IReadOnlyList<Limitation> result)> TryGetLimitations(string key)
+    {
+        var success = memoryCache.TryGetValue(key, out IReadOnlyList<Limitation> result);
+        return (success, result);
+    }
+
     public List<EndpointExternal> SetEndpointsCache(string key, List<EndpointV2> value, TimeSpan timeToLive)
     {
         var cacheEntryOptions = new MemoryCacheEntryOptions()
@@ -35,6 +43,19 @@ public class MemoryCacheProvider(IMemoryCache memoryCache, IOptions<Settings> se
 
         cacheEntryOptions.SetAbsoluteExpiration(timeToLive);
         var result = memoryCache.Set(key, MapToExternal(value), cacheEntryOptions);
+
+        return result;
+    }
+
+    public List<Limitation> SetLimitationsCache(string key, List<Limitation> value, TimeSpan timeToLive)
+    {
+        var cacheEntryOptions = new MemoryCacheEntryOptions()
+        {
+            Priority = CacheItemPriority.High,
+        };
+
+        cacheEntryOptions.SetAbsoluteExpiration(timeToLive);
+        var result = memoryCache.Set(key, value, cacheEntryOptions);
 
         return result;
     }

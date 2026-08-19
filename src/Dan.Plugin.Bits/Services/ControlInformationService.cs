@@ -13,6 +13,7 @@ using Dan.Plugin.Bits.Models;
 using FileHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
 
 namespace Dan.Plugin.Bits.Services;
 
@@ -26,6 +27,7 @@ public interface IControlInformationService
     Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg();
 
     Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache();
+    Task<IReadOnlyList<Limitation>> GetBankLimitations(string orgNo);
 }
 
 public class ControlInformationService(
@@ -40,6 +42,7 @@ public class ControlInformationService(
 
     private const string EndpointsKey = "endpoints_key";
     private const string PantUtleggKey = "pantutlegg_key";
+    private const string LimitationsKeyPrefix = "limitations_key";
     private const int ErrorKeyTemp = 1;
 
     public async Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints()
@@ -113,6 +116,26 @@ public class ControlInformationService(
         return await ReadEndpointsFromGithubAndCache(settings.PantUtleggResourceFile, PantUtleggKey, "PantUtlegg endpoints");
     }
 
+    public async Task<IReadOnlyList<Limitation>> ReadLimitationsAndCache(string orgNo)
+    {
+        return await ReadLimitationsFromGithubAndCache(settings.LimitationsResourceFile ,orgNo, $"{LimitationsKeyPrefix}{orgNo}", "Limitations");
+    }
+
+    public async Task<IReadOnlyList<Limitation>> GetBankLimitations(string orgNo)
+    {
+        var cacheKey = $"{LimitationsKeyPrefix}{orgNo}";
+        var (hasCachedValue, limitations) = await memCache.TryGetLimitations(cacheKey);
+
+        if (!hasCachedValue)
+        {
+            logger.LogInformation("No limitations found in cache for {orgNo}", orgNo);
+            limitations = await ReadLimitationsAndCache(orgNo);
+        }
+
+        logger.LogInformation("Returning total of {totalRecords} limitations for {orgNo} read from cache", limitations.Count, orgNo);
+        return limitations;
+    }
+
     private async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsFromGithubAndCache(string resourceFilePath, string cacheKey, string resourceName)
     {
         try
@@ -146,10 +169,37 @@ public class ControlInformationService(
         }
     }
 
-    private async Task<string> GetFileFromGithub(string filePath)
+    private async Task<IReadOnlyList<Limitation>> ReadLimitationsFromGithubAndCache(string resourceFile, string orgNo, string cacheKey, string resourceName)
+    {
+        try
+        {
+            var file = await GetFileFromGithub(resourceFile + $"{orgNo}.json", allowNotFound: true);
+            if (file == null)
+            {
+                logger.LogInformation("No {resourceName} file found on GitHub for {orgNo} at {resourceFile}", resourceName, orgNo, resourceFile);
+                return memCache.SetLimitationsCache(cacheKey, [], TimeSpan.FromMinutes(300));
+            }
+            
+
+            var limitations = JsonConvert.DeserializeObject<List<Limitation>>(file) ?? [];
+            var result = memCache.SetLimitationsCache(cacheKey, limitations, TimeSpan.FromMinutes(300));
+            logger.LogInformation("Cache refresh completed for {resourceName} ({cacheKey}) - total of {totalRecords} cached",
+                resourceName, cacheKey, limitations.Count);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Unable to fetch or parse {resourceName} for {orgNo} from {resourceFile}: {message}",
+                resourceName, orgNo, resourceFile, ex.Message);
+            throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable", ex);
+        }
+    }
+
+    private async Task<string> GetFileFromGithub(string filePath, bool allowNotFound = false)
     {
         var url = $"https://api.github.com/repos/data-altinn-no/bits/contents/{filePath}";
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.GithubPat);
@@ -163,7 +213,12 @@ public class ControlInformationService(
             return await response.Content.ReadAsStringAsync();
         }
 
-        logger.LogCritical("Github retrieval failed for {filePath}, status code: {StatusCode}, reason: {ReasonPhrase}", 
+        if (allowNotFound && response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        logger.LogCritical("Github retrieval failed for {filePath}, status code: {StatusCode}, reason: {ReasonPhrase}",
             filePath, response.StatusCode, response.ReasonPhrase);
         throw new EvidenceSourceTransientException(ErrorKeyTemp, "Banking endpoints are currently unavailable");
     }

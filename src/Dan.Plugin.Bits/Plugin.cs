@@ -86,6 +86,13 @@ public class Plugin
         {
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Kontrollinformasjon);
             var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
+
+            foreach (var endpoint in endpoints)
+            {
+                var limitations = await _controlInformationService.GetBankLimitations(endpoint.OrgNo);
+                endpoint.Limitations = limitations.ToList();
+            }
+
             var json = JsonConvert.SerializeObject(endpoints);
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
             return ecb.GetEvidenceValues();
@@ -98,6 +105,48 @@ public class Plugin
         catch (Exception e)
         {
             _logger.LogError(e, "Unable to fetch bank endpoints: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
+        }
+    }
+
+    [Function(PluginConstants.Limitations)]
+    public async Task<HttpResponseData> GetLimitations(
+        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
+        FunctionContext context)
+    {
+        return await EvidenceSourceResponse.CreateResponse(req, () => GetEvidenceValuesLimitations(req));
+    }
+
+    private async Task<List<EvidenceValue>> GetEvidenceValuesLimitations(HttpRequestData req)
+    {
+        try
+        {
+            var evidenceHarvesterRequest = await req.ReadFromJsonAsync<EvidenceHarvesterRequest>();
+            var orgNo = evidenceHarvesterRequest?.SubjectParty.NorwegianOrganizationNumber;
+
+            if (string.IsNullOrWhiteSpace(orgNo))
+            {
+                throw new EvidenceSourcePermanentClientException(PluginConstants.ErrorInvalidInput, "Organisasjonsnummer mangler i forespørselen");
+            }
+
+            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Limitations);
+            var limitations = await _controlInformationService.GetBankLimitations(orgNo);
+            var json = JsonConvert.SerializeObject(new LimitationsList { Limitations = limitations, Total = limitations.Count });
+            ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
+            return ecb.GetEvidenceValues();
+        }
+        catch (JsonSerializationException e)
+        {
+            _logger.LogError(e, "Unable to parse limitations response: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUnableToParseResponse, e.Message, e);
+        }
+        catch (EvidenceSourceException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "Unable to fetch limitations: {message}", e.Message);
             throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
         }
     }
