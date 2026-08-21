@@ -58,6 +58,7 @@ public class ControlInformationService(
         logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
 
         //remove endpoints that are not currently active, they are returned only in KontrollinformasjonUtvidet
+        //Limitations are only included in KontrollinformasjonUtvidet.
         return endpoints.Where(x =>
             (x.FromDate == null || x.FromDate <= DateTime.UtcNow) &&
             (x.ToDate == null || x.ToDate >= DateTime.UtcNow))
@@ -69,7 +70,8 @@ public class ControlInformationService(
                 Version = x.Version,
                 ToDate = null,
                 FromDate = null,
-                Name = x.Name
+                Name = x.Name,
+                Limitations = null
              })
             .ToList();
     }
@@ -101,8 +103,20 @@ public class ControlInformationService(
         }
 
         logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
-        return endpoints.Where(x =>
+
+        var activeEndpoints = endpoints.Where(x =>
             (x.ToDate == null || x.ToDate >= DateTime.UtcNow)).ToList();
+
+        // KontrollinformasjonUtvidet is the only dataset that should carry limitations, so they're attached
+        // here rather than in GetBankEndpoints. This mutates the EndpointExternal instances that live in the
+        // shared endpoints cache, so once populated they stay attached to those objects until the cache entry
+        // itself expires/refreshes - subsequent calls don't need to re-fetch limitations for the same endpoints.
+        foreach (var endpoint in activeEndpoints)
+        {
+            endpoint.Limitations = (await GetBankLimitations(endpoint.OrgNo)).ToList();
+        }
+
+        return activeEndpoints;
     }
 
 

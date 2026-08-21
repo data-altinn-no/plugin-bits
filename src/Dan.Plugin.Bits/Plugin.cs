@@ -14,7 +14,6 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
@@ -85,14 +84,8 @@ public class Plugin
         try
         {
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Kontrollinformasjon);
+            // GetBankEndpointsWithDates already attaches limitations per endpoint - see ControlInformationService.
             var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
-
-            foreach (var endpoint in endpoints)
-            {
-                var limitations = await _controlInformationService.GetBankLimitations(endpoint.OrgNo);
-                endpoint.Limitations = limitations.ToList();
-            }
-
             var json = JsonConvert.SerializeObject(endpoints);
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
             return ecb.GetEvidenceValues();
