@@ -84,7 +84,8 @@ public class Limitation
     [JsonProperty("area")]
     public string Area{ get; set; }
     [JsonProperty("apiResponseStatus")]
-    public string? ApiResponseStatus { get; set; } = null;
+    [JsonConverter(typeof(ApiResponseStatusConverter))]
+    public ApiResponseStatus? ApiResponseStatus { get; set; } = null;
     [JsonProperty("description")]
     public string Description { get; set; }
     [JsonProperty("guidence")]
@@ -96,4 +97,13 @@ public class Limitation
     /// </summary>
     [JsonProperty("updatedAt")]
     public DateOnly? UpdatedAt { get; set; }
+}
+
+public enum ApiResponseStatus
+{
+    Partial,
+    Complete,
+    DataNotDelivered,
+    NotApplicable,
+    Unknown
 }
