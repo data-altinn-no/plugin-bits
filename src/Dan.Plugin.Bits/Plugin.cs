@@ -179,7 +179,7 @@ public class Plugin
            [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
            FunctionContext context)
     {
-        var endpoints = await _controlInformationService.ReadEndpointsAndCache();
+        var endpoints = await _controlInformationService.ReadEndpointsAndCacheWithLimitations();
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });

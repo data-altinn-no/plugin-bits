@@ -27,6 +27,7 @@ public interface IControlInformationService
     Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg();
 
     Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache();
+    Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCacheWithLimitations();
     Task<IReadOnlyList<Limitation>> GetBankLimitations(string orgNo);
 }
 
@@ -111,10 +112,7 @@ public class ControlInformationService(
         // here rather than in GetBankEndpoints. This mutates the EndpointExternal instances that live in the
         // shared endpoints cache, so once populated they stay attached to those objects until the cache entry
         // itself expires/refreshes - subsequent calls don't need to re-fetch limitations for the same endpoints.
-        foreach (var endpoint in activeEndpoints)
-        {
-            endpoint.Limitations = (await GetBankLimitations(endpoint.OrgNo)).ToList();
-        }
+        await AttachLimitations(activeEndpoints);
 
         return activeEndpoints;
     }
@@ -123,6 +121,24 @@ public class ControlInformationService(
     public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache()
     {
         return await ReadEndpointsFromGithubAndCache(settings.EndpointsResourceFile, EndpointsKey, "Bank endpoints");
+    }
+
+    public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCacheWithLimitations()
+    {
+        var endpoints = await ReadEndpointsAndCache();
+        var activeEndpoints = endpoints.Where(x => x.ToDate == null || x.ToDate >= DateTime.UtcNow);
+
+        await AttachLimitations(activeEndpoints);
+
+        return endpoints;
+    }
+
+    private async Task AttachLimitations(IEnumerable<EndpointExternal> endpoints)
+    {
+        foreach (var endpoint in endpoints)
+        {
+            endpoint.Limitations = (await GetBankLimitations(endpoint.OrgNo)).ToList();
+        }
     }
 
     public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg()
