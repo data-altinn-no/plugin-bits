@@ -60,9 +60,7 @@ public class ControlInformationService(
 
         //remove endpoints that are not currently active, they are returned only in KontrollinformasjonUtvidet
         //Limitations are only included in KontrollinformasjonUtvidet.
-        return endpoints.Where(x =>
-            (x.FromDate == null || x.FromDate <= DateTime.UtcNow) &&
-            (x.ToDate == null || x.ToDate >= DateTime.UtcNow))
+        return endpoints.Where(IsActiveEndpoint)
              .Select(x => new EndpointExternal
              {
                 Env = x.Env,
@@ -105,8 +103,7 @@ public class ControlInformationService(
 
         logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
 
-        var activeEndpoints = endpoints.Where(x =>
-            (x.ToDate == null || x.ToDate >= DateTime.UtcNow)).ToList();
+        var activeEndpoints = endpoints.Where(IsActiveEndpoint).ToList();
 
         // KontrollinformasjonUtvidet is the only dataset that should carry limitations, so they're attached
         // here rather than in GetBankEndpoints. This mutates the EndpointExternal instances that live in the
@@ -126,7 +123,7 @@ public class ControlInformationService(
     public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCacheWithLimitations()
     {
         var endpoints = await ReadEndpointsAndCache();
-        var activeEndpoints = endpoints.Where(x => x.ToDate == null || x.ToDate >= DateTime.UtcNow);
+        var activeEndpoints = endpoints.Where(IsActiveEndpoint);
 
         await AttachLimitations(activeEndpoints);
 
@@ -140,6 +137,10 @@ public class ControlInformationService(
             endpoint.Limitations = (await GetBankLimitations(endpoint.OrgNo)).ToList();
         }
     }
+   
+    private static bool IsActiveEndpoint(EndpointExternal x) =>
+        (x.FromDate == null || x.FromDate <= DateTime.UtcNow) &&
+        (x.ToDate == null || x.ToDate >= DateTime.UtcNow);
 
     public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg()
     {

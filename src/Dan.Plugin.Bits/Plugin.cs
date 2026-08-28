@@ -29,7 +29,7 @@ public class Plugin
     private readonly IMemoryCacheProvider _memCache;
     private readonly IControlInformationService _controlInformationService;
     private const string ENDPOINTS_KEY = "endpoints_key";
-    private static readonly Regex NorwegianOrganizationNumberPattern = new(@"^\d{9}$", RegexOptions.Compiled);
+    private static readonly Regex NorwegianOrganizationNumberPattern = new(@"\A[0-9]{9}\z", RegexOptions.Compiled);
 
 
     public Plugin(IOptions<Settings> settings, IControlInformationService controlInformationService, ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory, IMemoryCacheProvider memCache)
