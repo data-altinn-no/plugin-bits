@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http;
-using System.Text;
 using System.Threading.Tasks;
 using Dan.Common.Exceptions;
 using Dan.Common.Models;
@@ -11,12 +10,11 @@ using Dan.Common.Util;
 using Dan.Plugin.Bits.Config;
 using Dan.Plugin.Bits.Models;
 using Dan.Plugin.Bits.Services;
-using FileHelpers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
 namespace Dan.Plugin.Bits;
@@ -31,6 +29,7 @@ public class Plugin
     private readonly IMemoryCacheProvider _memCache;
     private readonly IControlInformationService _controlInformationService;
     private const string ENDPOINTS_KEY = "endpoints_key";
+    private static readonly Regex NorwegianOrganizationNumberPattern = new(@"\A[0-9]{9}\z", RegexOptions.Compiled);
 
 
     public Plugin(IOptions<Settings> settings, IControlInformationService controlInformationService, ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory, IMemoryCacheProvider memCache)
@@ -85,6 +84,7 @@ public class Plugin
         try
         {
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Kontrollinformasjon);
+            // GetBankEndpointsWithDates already attaches limitations per endpoint - see ControlInformationService.
             var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
             var json = JsonConvert.SerializeObject(endpoints);
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
@@ -98,6 +98,48 @@ public class Plugin
         catch (Exception e)
         {
             _logger.LogError(e, "Unable to fetch bank endpoints: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
+        }
+    }
+
+    [Function(PluginConstants.Limitations)]
+    public async Task<HttpResponseData> GetLimitations(
+        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
+        FunctionContext context)
+    {
+        return await EvidenceSourceResponse.CreateResponse(req, () => GetEvidenceValuesLimitations(req));
+    }
+
+    private async Task<List<EvidenceValue>> GetEvidenceValuesLimitations(HttpRequestData req)
+    {
+        try
+        {
+            var evidenceHarvesterRequest = await req.ReadFromJsonAsync<EvidenceHarvesterRequest>();
+            var orgNo = evidenceHarvesterRequest?.SubjectParty?.NorwegianOrganizationNumber;
+
+            if (string.IsNullOrWhiteSpace(orgNo) || !NorwegianOrganizationNumberPattern.IsMatch(orgNo))
+            {
+                throw new EvidenceSourcePermanentClientException(PluginConstants.ErrorInvalidInput, "Organisasjonsnummer mangler eller er ugyldig i forespørselen");
+            }
+
+            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Limitations);
+            var limitations = await _controlInformationService.GetBankLimitations(orgNo);
+            var json = JsonConvert.SerializeObject(new LimitationsList { Limitations = limitations, Total = limitations.Count });
+            ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
+            return ecb.GetEvidenceValues();
+        }
+        catch (JsonSerializationException e)
+        {
+            _logger.LogError(e, "Unable to parse limitations response: {message}", e.Message);
+            throw new EvidenceSourceTransientException(PluginConstants.ErrorUnableToParseResponse, e.Message, e);
+        }
+        catch (EvidenceSourceException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "Unable to fetch limitations: {message}", e.Message);
             throw new EvidenceSourceTransientException(PluginConstants.ErrorUpstreamUnavailble, e.Message, e);
         }
     }
@@ -137,7 +179,7 @@ public class Plugin
            [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
            FunctionContext context)
     {
-        var endpoints = await _controlInformationService.ReadEndpointsAndCache();
+        var endpoints = await _controlInformationService.ReadEndpointsAndCacheWithLimitations();
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });

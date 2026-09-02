@@ -39,6 +39,15 @@ public class EndpointsList
     public int Total { get; set; }
 }
 
+public class LimitationsList
+{
+    [JsonProperty("limitations")]
+    public IReadOnlyList<Limitation> Limitations { get; set; }
+
+    [JsonProperty("total")]
+    public int Total { get; set; }
+}
+
 public class EndpointExternal
 {
     [JsonProperty("orgNo")]
@@ -62,5 +71,39 @@ public class EndpointExternal
     [JsonProperty("toDate", NullValueHandling = NullValueHandling.Ignore, DefaultValueHandling = DefaultValueHandling.Ignore)]
     public DateTimeOffset? ToDate { get; set; }
 
+    [JsonProperty("limitations", NullValueHandling = NullValueHandling.Ignore, DefaultValueHandling = DefaultValueHandling.Ignore)]
+    public List<Limitation> Limitations { get; set; }
+}
 
+public class Limitation
+{
+    [JsonProperty("limitationId")]
+    public string LimitationId { get; set; }
+    [JsonProperty("limitationGroupId")]
+    public string? LimitationGroupId { get; set; } = null;
+    [JsonProperty("area")]
+    public string Area{ get; set; }
+    [JsonProperty("apiResponseStatus")]
+    [JsonConverter(typeof(ApiResponseStatusConverter))]
+    public ApiResponseStatus? ApiResponseStatus { get; set; } = null;
+    [JsonProperty("description")]
+    public string Description { get; set; }
+    [JsonProperty("guidence")]
+    public string Guidence { get; set; } = null;
+    [JsonProperty("plannedFixDate")]
+    public DateOnly? PlannedFixDate { get; set; } = null;
+    /// <summary>
+    /// updatedAt angir når den konkrete begrensningen sist ble faglig oppdatert i grunnlagsdataene
+    /// </summary>
+    [JsonProperty("updatedAt")]
+    public DateOnly? UpdatedAt { get; set; }
+}
+
+public enum ApiResponseStatus
+{
+    Partial,
+    Complete,
+    DataNotDelivered,
+    NotApplicable,
+    Unknown
 }

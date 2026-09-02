@@ -75,6 +75,28 @@ public class Metadata : IEvidenceSourceMetadata
             },
             new EvidenceCode()
             {
+                EvidenceCodeName = PluginConstants.Limitations,
+                EvidenceSource = PluginConstants.SourceName,
+                BelongsToServiceContexts = [ServiceContext],
+                Values =
+                [
+                    new EvidenceValue()
+                    {
+                        EvidenceValueName = PluginConstants.DefaultValue,
+                        ValueType = EvidenceValueType.JsonSchema,
+                        JsonSchemaDefintion = EvidenceValue.SchemaFromObject<LimitationsList>(Formatting.Indented)
+                    }
+                ],
+                AuthorizationRequirements =
+                [
+                    new MaskinportenScopeRequirement()
+                    {
+                        RequiredScopes = [ScopeKontrollinformasjon]
+                    }
+                ]
+            },
+            new EvidenceCode()
+            {
                 EvidenceCodeName = PluginConstants.KontrollinformasjonV2,
                 EvidenceSource = PluginConstants.SourceName,
                 BelongsToServiceContexts = [ServiceContext],
