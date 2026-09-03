@@ -80,30 +80,28 @@ public class Limitation
     [JsonProperty("limitationId")]
     public string LimitationId { get; set; }
     [JsonProperty("limitationGroupId")]
-    public string? LimitationGroupId { get; set; } = null;
+    [FieldOptional]
+    public string? LimitationGroupId { get; set; }
     [JsonProperty("area")]
-    public string Area{ get; set; }
+    [FieldOptional]
+    public string? Area{ get; set; }
+    /// <summary>
+    /// Vanligvis Complete or Partial. Test data følger ikke reglene for hva ApiResponseStatus
+    /// kan være og er derfor en string for å unngå crash.
+    /// </summary>
     [JsonProperty("apiResponseStatus")]
-    [JsonConverter(typeof(ApiResponseStatusConverter))]
-    public ApiResponseStatus? ApiResponseStatus { get; set; } = null;
+    [FieldOptional]
+    public string? ApiResponseStatus { get; set; }
     [JsonProperty("description")]
     public string Description { get; set; }
-    [JsonProperty("guidence")]
-    public string Guidence { get; set; } = null;
+    [JsonProperty("guidance")]
+    public string? Guidance { get; set; }
     [JsonProperty("plannedFixDate")]
-    public DateOnly? PlannedFixDate { get; set; } = null;
+    [FieldOptional]
+    public string? PlannedFixDate { get; set; }
     /// <summary>
     /// updatedAt angir når den konkrete begrensningen sist ble faglig oppdatert i grunnlagsdataene
     /// </summary>
     [JsonProperty("updatedAt")]
-    public DateOnly? UpdatedAt { get; set; }
-}
-
-public enum ApiResponseStatus
-{
-    Partial,
-    Complete,
-    DataNotDelivered,
-    NotApplicable,
-    Unknown
+    public string UpdatedAt { get; set; }
 }

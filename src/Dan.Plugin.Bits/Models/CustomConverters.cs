@@ -5,42 +5,6 @@ using Newtonsoft.Json;
 
 
 namespace Dan.Plugin.Bits.Models;
-
-// Deserializes an apiResponseStatus string against the ApiResponseStatus enum.
-// Unrecognized value falls back to ApiResponseStatus.Unknown
-public sealed class ApiResponseStatusConverter : JsonConverter
-{
-    public override bool CanConvert(Type objectType)
-    {
-        return objectType == typeof(ApiResponseStatus) || objectType == typeof(ApiResponseStatus?);
-    }
-
-    public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
-    {
-        if (reader.TokenType == JsonToken.Null)
-            return null;
-
-        var text = reader.Value?.ToString();
-
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-
-        return Enum.TryParse<ApiResponseStatus>(text, ignoreCase: true, out var status) ? status : ApiResponseStatus.Unknown;
-    }
-
-    public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
-    {
-        if (value == null)
-        {
-            writer.WriteNull();
-        }
-        else
-        {
-            writer.WriteValue(value.ToString());
-        }
-    }
-}
-
 public sealed class DateTimeOffsetConverter : ConverterBase
 {
     private static readonly string[] Formats =
