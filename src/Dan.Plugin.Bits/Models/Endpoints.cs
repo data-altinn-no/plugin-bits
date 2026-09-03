@@ -91,18 +91,17 @@ public class Limitation
     /// </summary>
     [JsonProperty("apiResponseStatus")]
     [FieldOptional]
-    public string ApiResponseStatus { get; set; }
+    public string? ApiResponseStatus { get; set; }
     [JsonProperty("description")]
     public string Description { get; set; }
     [JsonProperty("guidance")]
-    public string Guidance { get; set; }
+    public string? Guidance { get; set; }
     [JsonProperty("plannedFixDate")]
     [FieldOptional]
-    public DateOnly? PlannedFixDate { get; set; }
+    public string? PlannedFixDate { get; set; }
     /// <summary>
     /// updatedAt angir når den konkrete begrensningen sist ble faglig oppdatert i grunnlagsdataene
     /// </summary>
     [JsonProperty("updatedAt")]
-    [FieldOptional]
-    public DateOnly? UpdatedAt { get; set; }
+    public string UpdatedAt { get; set; }
 }
