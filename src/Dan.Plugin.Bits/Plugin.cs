@@ -102,15 +102,15 @@ public class Plugin
         }
     }
 
-    [Function(PluginConstants.Limitations)]
-    public async Task<HttpResponseData> GetLimitations(
+    [Function(PluginConstants.Begrensninger)]
+    public async Task<HttpResponseData> GetBegrensninger(
         [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
         FunctionContext context)
     {
-        return await EvidenceSourceResponse.CreateResponse(req, () => GetEvidenceValuesLimitations(req));
+        return await EvidenceSourceResponse.CreateResponse(req, () => GetEvidenceValuesBegrensninger(req));
     }
 
-    private async Task<List<EvidenceValue>> GetEvidenceValuesLimitations(HttpRequestData req)
+    private async Task<List<EvidenceValue>> GetEvidenceValuesBegrensninger(HttpRequestData req)
     {
         try
         {
@@ -122,7 +122,7 @@ public class Plugin
                 throw new EvidenceSourcePermanentClientException(PluginConstants.ErrorInvalidInput, "Organisasjonsnummer mangler eller er ugyldig i forespørselen");
             }
 
-            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Limitations);
+            var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Begrensninger);
             var limitations = await _controlInformationService.GetBankLimitations(orgNo);
             var json = JsonConvert.SerializeObject(new LimitationsList { Limitations = limitations, Total = limitations.Count });
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);

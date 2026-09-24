@@ -19,7 +19,7 @@ public static class PluginConstants
 
     public const string PantUtlegg = "PantUtlegg";
 
-    public const string Limitations = "Limitations";
+    public const string Begrensninger = "Begrensninger";
 
     public const string DefaultValue = "default";
 }
