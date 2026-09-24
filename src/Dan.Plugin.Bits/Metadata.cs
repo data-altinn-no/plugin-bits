@@ -75,9 +75,17 @@ public class Metadata : IEvidenceSourceMetadata
             },
             new EvidenceCode()
             {
-                EvidenceCodeName = PluginConstants.Limitations,
+                EvidenceCodeName = PluginConstants.Begrensninger,
                 EvidenceSource = PluginConstants.SourceName,
                 BelongsToServiceContexts = [ServiceContext],
+                DatasetAliases =
+                [
+                    new DatasetAlias()
+                    {
+                        ServiceContext = ServiceContext,
+                        DatasetAliasName = "Limitations"
+                    }
+                ],
                 Values =
                 [
                     new EvidenceValue()
