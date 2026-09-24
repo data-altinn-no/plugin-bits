@@ -84,6 +84,11 @@ public class Metadata : IEvidenceSourceMetadata
                     {
                         ServiceContext = ServiceContext,
                         DatasetAliasName = "Limitations"
+                    },
+                    new DatasetAlias()
+                    {
+                        ServiceContext = ServiceContext,
+                        DatasetAliasName = "Begrensninger"
                     }
                 ],
                 Values =
