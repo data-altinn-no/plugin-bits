@@ -92,8 +92,16 @@ public class Limitation
     [JsonProperty("apiResponseStatus")]
     [FieldOptional]
     public string? ApiResponseStatus { get; set; }
+    /// <summary>
+    /// Teknisk beskrivelse
+    /// </summary>
     [JsonProperty("description")]
     public string Description { get; set; }
+    /// <summary>
+    /// Hvilken innvirkning den tekniske beskrivelsen (Description) har på funksjonaliteten
+    /// </summary>
+    [JsonProperty("functionalDescription")]
+    public string? FunctionalDescription { get; set; }
     [JsonProperty("guidance")]
     public string? Guidance { get; set; }
     [JsonProperty("plannedFixDate")]
