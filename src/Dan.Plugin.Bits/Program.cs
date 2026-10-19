@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Extensions.Hosting;
 using Dan.Common.Extensions;
 using Dan.Plugin.Bits.Config;
@@ -14,7 +15,12 @@ var host = new HostBuilder()
         services.Configure<Settings>(context.Configuration);
         services.AddHttpClient();
         services.AddSingleton<IMemoryCacheProvider, MemoryCacheProvider>();
-        services.AddTransient<IControlInformationService, ControlInformationService>();
+        // Singletons: GithubClient holds the resolved PAT, ControlInformationService holds the single-flight locks.
+        services.AddSingleton<IGithubClient, GithubClient>();
+        services.AddSingleton<IControlInformationService, ControlInformationService>();
+        services.AddSingleton(TimeProvider.System);
+        // Warms the caches in every instance at start-up (deploy, restart, scale-out).
+        services.AddHostedService<CacheWarmupService>();
     })
     .Build();
 
