@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http;
 using System.Threading.Tasks;
 using Dan.Common.Exceptions;
 using Dan.Common.Models;
@@ -15,29 +13,24 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Options;
 
 namespace Dan.Plugin.Bits;
 
 public class Plugin
-
 {
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
-    private readonly HttpClient _client;
-    private readonly Settings _settings;
-    private readonly IMemoryCacheProvider _memCache;
     private readonly IControlInformationService _controlInformationService;
-    private const string ENDPOINTS_KEY = "endpoints_key";
     private static readonly Regex NorwegianOrganizationNumberPattern = new(@"\A[0-9]{9}\z", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Safety net for the GitHub-triggered refresh (missed webhook, failed workflow run, recycled instance).
+    /// Runs at the top of every hour.
+    /// </summary>
+    private const string CacheRefreshSchedule = "0 0 * * * *";
 
-    public Plugin(IOptions<Settings> settings, IControlInformationService controlInformationService, ILoggerFactory loggerFactory, IHttpClientFactory httpClientFactory, IMemoryCacheProvider memCache)
+    public Plugin(IControlInformationService controlInformationService, ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger<Plugin>();
-        _memCache = memCache;
-        _client = httpClientFactory.CreateClient("SafeHttpClient");
-        _settings = settings.Value;
         _controlInformationService = controlInformationService;
     }
 
@@ -84,7 +77,7 @@ public class Plugin
         try
         {
             var ecb = new EvidenceBuilder(new Metadata(), PluginConstants.Kontrollinformasjon);
-            // GetBankEndpointsWithDates already attaches limitations per endpoint - see ControlInformationService.
+            // Limitations are attached to the endpoints when the cached snapshot is built - see ControlInformationService.
             var endpoints = await _controlInformationService.GetBankEndpointsWithDates();
             var json = JsonConvert.SerializeObject(endpoints);
             ecb.AddEvidenceValue(PluginConstants.DefaultValue, json, PluginConstants.SourceName, false);
@@ -174,29 +167,53 @@ public class Plugin
         }
     }
 
+    /// <summary>
+    /// Called by the bits repo workflow on changes to the control CSV or any limitation file.
+    /// Re-reads everything from GitHub and swaps the cached snapshot. Fails with 500 (and keeps the old snapshot)
+    /// if anything cannot be fetched, so the workflow run shows the failure.
+    /// </summary>
     [Function("OppdaterKontrollinformasjon")]
     public async Task<HttpResponseData> UpdateKontrollinformasjon(
            [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
            FunctionContext context)
     {
-        var endpoints = await _controlInformationService.ReadEndpointsAndCacheWithLimitations();
+        _logger.LogInformation("Cache refresh requested via webhook OppdaterKontrollinformasjon");
+        var endpoints = await _controlInformationService.RefreshControlInformation();
+        _logger.LogInformation("Webhook OppdaterKontrollinformasjon completed - returning {endpointCount} endpoints", endpoints.Count);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });
         return response;
     }
 
+    /// <summary>
+    /// Called by the bits repo workflow on changes to the PantUtlegg CSV.
+    /// </summary>
     [Function("OppdaterPantUtlegg")]
     public async Task<HttpResponseData> OppdaterPantUtlegg(
        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req,
        FunctionContext context)
     {
-        var endpoints = await _controlInformationService.ReadEndpointsAndCachePantUtlegg();
+        _logger.LogInformation("Cache refresh requested via webhook OppdaterPantUtlegg");
+        var endpoints = await _controlInformationService.RefreshPantUtlegg();
+        _logger.LogInformation("Webhook OppdaterPantUtlegg completed - returning {endpointCount} endpoints", endpoints.Count);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new EndpointsList() { Endpoints = endpoints, Total = endpoints.Count });
         return response;
     }
 
-
+    /// <summary>
+    /// Scheduled safety net. One download of the repository refreshes both caches; a failure surfaces as a failed run
+    /// and keeps the previous data.
+    /// </summary>
+    [Function("OppdaterCachePlanlagt")]
+    public async Task ScheduledCacheRefresh(
+        [TimerTrigger(CacheRefreshSchedule)] TimerInfo timer,
+        FunctionContext context)
+    {
+        _logger.LogInformation("Cache refresh requested via timer OppdaterCachePlanlagt (past due: {isPastDue}, next run: {next})", timer.IsPastDue, timer.ScheduleStatus?.Next);
+        await _controlInformationService.RefreshAll();
+        _logger.LogInformation("Scheduled cache refresh completed");
+    }
 }

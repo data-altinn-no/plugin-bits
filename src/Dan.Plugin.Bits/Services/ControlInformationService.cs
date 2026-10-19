@@ -1,12 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using Dan.Common;
 using Dan.Common.Exceptions;
 using Dan.Plugin.Bits.Config;
 using Dan.Plugin.Bits.Models;
@@ -21,236 +20,394 @@ public interface IControlInformationService
 {
     Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints();
     Task<IReadOnlyList<EndpointExternal>> GetBankEndpointsWithDates();
-
     Task<IReadOnlyList<EndpointExternal>> GetPantUtlegg();
-
-    Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg();
-
-    Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache();
-    Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCacheWithLimitations();
     Task<IReadOnlyList<Limitation>> GetBankLimitations(string orgNo);
+
+    /// <summary>
+    /// Re-reads endpoints and all limitations from GitHub and replaces the cached snapshot. Called by the
+    /// OppdaterKontrollinformasjon webhook (triggered from the bits repo).
+    /// </summary>
+    Task<IReadOnlyList<EndpointExternal>> RefreshControlInformation();
+
+    /// <summary>
+    /// Re-reads PantUtlegg endpoints from GitHub and replaces the cached list. Called by the OppdaterPantUtlegg webhook.
+    /// </summary>
+    Task<IReadOnlyList<EndpointExternal>> RefreshPantUtlegg();
+
+    /// <summary>
+    /// Refreshes everything from one download of the repository. Called at worker start-up and by the scheduled refresh.
+    /// </summary>
+    Task RefreshAll();
 }
 
+/// <summary>
+/// Cache flow: every instance warms its cache at start-up, the bits repo calls the Oppdater* functions on every change,
+/// and a timer refreshes as a safety net. On top of that each snapshot has a soft time-to-live: a request that finds a
+/// snapshot older than <see cref="Settings.CacheSoftTtlMinutes"/> is answered from it immediately while one background
+/// rebuild replaces it, so staleness is bounded per instance without ever putting GitHub on the request path.
+/// A rebuild is one download of the repository archive; concurrent rebuilds are serialised by single-flight locks.
+/// </summary>
 public class ControlInformationService(
-    IHttpClientFactory httpClientFactory,
+    IGithubClient github,
     ILoggerFactory loggerFactory,
     IOptions<Settings> settings,
-    IMemoryCacheProvider memCache) : IControlInformationService
+    IMemoryCacheProvider memCache,
+    TimeProvider timeProvider) : IControlInformationService
 {
-    private readonly ILogger logger = loggerFactory.CreateLogger<Plugin>();
-    private readonly HttpClient client = httpClientFactory.CreateClient(Constants.SafeHttpClient);
+    private readonly ILogger logger = loggerFactory.CreateLogger<ControlInformationService>();
     private readonly Settings settings = settings.Value;
 
-    private const string EndpointsKey = "endpoints_key";
-    private const string PantUtleggKey = "pantutlegg_key";
-    private const string LimitationsKeyPrefix = "limitations_key";
+    // Always taken in this order (control information, then PantUtlegg) to avoid deadlocks in RefreshAll.
+    private readonly SemaphoreSlim controlInformationGate = new(1, 1);
+    private readonly SemaphoreSlim pantUtleggGate = new(1, 1);
+
+    private readonly BackgroundRefresh controlInformationBackgroundRefresh = new(loggerFactory.CreateLogger<BackgroundRefresh>(), "control information");
+    private readonly BackgroundRefresh pantUtleggBackgroundRefresh = new(loggerFactory.CreateLogger<BackgroundRefresh>(), "PantUtlegg");
+
+    private const string ControlInformationKey = "control_information_snapshot";
+    private const string PantUtleggKey = "pantutlegg_snapshot";
     private const int ErrorKeyTemp = 1;
+
+    /// <summary>The background refresh currently running (or the last one), so tests can await it.</summary>
+    internal Task ControlInformationBackgroundRefresh => controlInformationBackgroundRefresh.Current;
+
+    /// <summary>The background refresh currently running (or the last one), so tests can await it.</summary>
+    internal Task PantUtleggBackgroundRefresh => pantUtleggBackgroundRefresh.Current;
 
     public async Task<IReadOnlyList<EndpointExternal>> GetBankEndpoints()
     {
-        var (hasCachedValue, endpoints) = await memCache.TryGetEndpoints(EndpointsKey);
+        var snapshot = await GetControlInformationSnapshot();
 
-        if (!hasCachedValue)
-        {
-            logger.LogInformation("No endpoints found in cache");
-            endpoints = await ReadEndpointsAndCache();
-        }
-
-        logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
-
-        //remove endpoints that are not currently active, they are returned only in KontrollinformasjonUtvidet
-        //Limitations are only included in KontrollinformasjonUtvidet.
-        return endpoints.Where(IsActiveEndpoint)
-             .Select(x => new EndpointExternal
-             {
+        // Inactive endpoints, dates and limitations are only returned in KontrollinformasjonUtvidet.
+        var endpoints = snapshot.Endpoints
+            .Where(IsActiveEndpoint)
+            .Select(x => new EndpointExternal
+            {
                 Env = x.Env,
                 OrgNo = x.OrgNo,
                 Url = x.Url,
                 Version = x.Version,
+                Name = x.Name,
                 ToDate = null,
                 FromDate = null,
-                Name = x.Name,
                 Limitations = null
-             })
+            })
             .ToList();
-    }
 
-    public async Task<IReadOnlyList<EndpointExternal>> GetPantUtlegg()
-    {
-        var (hasCachedValue, endpoints) = await memCache.TryGetEndpoints(PantUtleggKey);
-
-        if (!hasCachedValue)
-        {
-            logger.LogInformation("No PantUtlegg endpoints found in cache");
-            endpoints = await ReadEndpointsAndCachePantUtlegg();
-        }
-
-        logger.LogInformation("Returning total of {totalRecords} PantUtlegg endpoints read from cache", endpoints.Count);
-
+        logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
         return endpoints;
     }
-
 
     public async Task<IReadOnlyList<EndpointExternal>> GetBankEndpointsWithDates()
     {
-        var (hasCachedValue, endpoints) = await memCache.TryGetEndpoints(EndpointsKey);
+        var snapshot = await GetControlInformationSnapshot();
+        var endpoints = snapshot.Endpoints.Where(IsActiveEndpoint).ToList();
 
-        if (!hasCachedValue)
-        {
-            logger.LogInformation("No endpoints found in cache");
-            endpoints = await ReadEndpointsAndCache();
-        }
-
-        logger.LogInformation("Returning total of {totalRecords} endpoints read from cache", endpoints.Count);
-
-        var activeEndpoints = endpoints.Where(IsActiveEndpoint).ToList();
-
-        // KontrollinformasjonUtvidet is the only dataset that should carry limitations, so they're attached
-        // here rather than in GetBankEndpoints. This mutates the EndpointExternal instances that live in the
-        // shared endpoints cache, so once populated they stay attached to those objects until the cache entry
-        // itself expires/refreshes - subsequent calls don't need to re-fetch limitations for the same endpoints.
-        await AttachLimitations(activeEndpoints);
-
-        return activeEndpoints;
-    }
-
-
-    public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCache()
-    {
-        return await ReadEndpointsFromGithubAndCache(settings.EndpointsResourceFile, EndpointsKey, "Bank endpoints");
-    }
-
-    public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCacheWithLimitations()
-    {
-        var endpoints = await ReadEndpointsAndCache();
-        var activeEndpoints = endpoints.Where(IsActiveEndpoint);
-
-        await AttachLimitations(activeEndpoints);
-
+        logger.LogInformation("Returning total of {totalRecords} endpoints with limitations read from cache", endpoints.Count);
         return endpoints;
-    }
-
-    private async Task AttachLimitations(IEnumerable<EndpointExternal> endpoints)
-    {
-        foreach (var endpoint in endpoints)
-        {
-            endpoint.Limitations = (await GetBankLimitations(endpoint.OrgNo)).ToList();
-        }
-    }
-   
-    private static bool IsActiveEndpoint(EndpointExternal x) =>
-        (x.FromDate == null || x.FromDate <= DateTime.UtcNow) &&
-        (x.ToDate == null || x.ToDate >= DateTime.UtcNow);
-
-    public async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsAndCachePantUtlegg()
-    {
-        return await ReadEndpointsFromGithubAndCache(settings.PantUtleggResourceFile, PantUtleggKey, "PantUtlegg endpoints");
-    }
-
-    public async Task<IReadOnlyList<Limitation>> ReadLimitationsAndCache(string orgNo)
-    {
-        return await ReadLimitationsFromGithubAndCache(settings.LimitationsResourceFile ,orgNo, $"{LimitationsKeyPrefix}{orgNo}", "Limitations");
     }
 
     public async Task<IReadOnlyList<Limitation>> GetBankLimitations(string orgNo)
     {
-        var cacheKey = $"{LimitationsKeyPrefix}{orgNo}";
-        var (hasCachedValue, limitations) = await memCache.TryGetLimitations(cacheKey);
-
-        if (!hasCachedValue)
-        {
-            logger.LogInformation("No limitations found in cache for {orgNo}", orgNo);
-            limitations = await ReadLimitationsAndCache(orgNo);
-        }
+        var snapshot = await GetControlInformationSnapshot();
+        var limitations = snapshot.LimitationsByOrgNo.TryGetValue(orgNo, out var found) ? found : [];
 
         logger.LogInformation("Returning total of {totalRecords} limitations for {orgNo} read from cache", limitations.Count, orgNo);
         return limitations;
     }
 
-    private async Task<IReadOnlyList<EndpointExternal>> ReadEndpointsFromGithubAndCache(string resourceFilePath, string cacheKey, string resourceName)
+    public async Task<IReadOnlyList<EndpointExternal>> GetPantUtlegg()
+    {
+        if (!memCache.TryGet(PantUtleggKey, out PantUtleggSnapshot snapshot))
+        {
+            logger.LogWarning("No PantUtlegg endpoints in cache - building on request path");
+            await pantUtleggGate.WaitAsync();
+            try
+            {
+                if (!memCache.TryGet(PantUtleggKey, out snapshot))
+                {
+                    snapshot = BuildAndStorePantUtlegg(await DownloadArchive());
+                }
+            }
+            finally
+            {
+                pantUtleggGate.Release();
+            }
+        }
+        else if (IsStale(snapshot.RefreshedAt))
+        {
+            pantUtleggBackgroundRefresh.TryStart(RefreshPantUtlegg, AgeOf(snapshot.RefreshedAt));
+        }
+
+        logger.LogInformation("Returning total of {totalRecords} PantUtlegg endpoints read from cache", snapshot.Endpoints.Count);
+        return snapshot.Endpoints;
+    }
+
+    public async Task<IReadOnlyList<EndpointExternal>> RefreshControlInformation()
+    {
+        await controlInformationGate.WaitAsync();
+        try
+        {
+            var snapshot = BuildAndStoreControlInformation(await DownloadArchive());
+            return snapshot.Endpoints;
+        }
+        finally
+        {
+            controlInformationGate.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<EndpointExternal>> RefreshPantUtlegg()
+    {
+        await pantUtleggGate.WaitAsync();
+        try
+        {
+            return BuildAndStorePantUtlegg(await DownloadArchive()).Endpoints;
+        }
+        finally
+        {
+            pantUtleggGate.Release();
+        }
+    }
+
+    public async Task RefreshAll()
+    {
+        await controlInformationGate.WaitAsync();
+        try
+        {
+            await pantUtleggGate.WaitAsync();
+            try
+            {
+                var archive = await DownloadArchive();
+                BuildAndStoreControlInformation(archive);
+                BuildAndStorePantUtlegg(archive);
+            }
+            finally
+            {
+                pantUtleggGate.Release();
+            }
+        }
+        finally
+        {
+            controlInformationGate.Release();
+        }
+    }
+
+    private async Task<ControlInformationSnapshot> GetControlInformationSnapshot()
+    {
+        if (memCache.TryGet(ControlInformationKey, out ControlInformationSnapshot snapshot))
+        {
+            if (IsStale(snapshot.RefreshedAt))
+            {
+                // Serve the current snapshot now; one background rebuild replaces it.
+                controlInformationBackgroundRefresh.TryStart(RefreshControlInformation, AgeOf(snapshot.RefreshedAt));
+            }
+
+            return snapshot;
+        }
+
+        logger.LogWarning("No control information in cache - building snapshot on request path");
+
+        // Single-flight: concurrent cold requests wait for the one rebuild instead of each hitting GitHub.
+        await controlInformationGate.WaitAsync();
+        try
+        {
+            if (memCache.TryGet(ControlInformationKey, out snapshot))
+            {
+                return snapshot;
+            }
+
+            return BuildAndStoreControlInformation(await DownloadArchive());
+        }
+        finally
+        {
+            controlInformationGate.Release();
+        }
+    }
+
+    private TimeSpan AgeOf(DateTimeOffset refreshedAt) => timeProvider.GetUtcNow() - refreshedAt;
+
+    private bool IsStale(DateTimeOffset refreshedAt)
+    {
+        return settings.CacheSoftTtlMinutes > 0
+               && timeProvider.GetUtcNow() - refreshedAt > TimeSpan.FromMinutes(settings.CacheSoftTtlMinutes);
+    }
+
+    private async Task<RepositoryArchive> DownloadArchive()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var archive = RepositoryArchive.FromZip(await github.DownloadRepositoryArchive());
+            logger.LogInformation("Repository archive {rootFolder} with {fileCount} files downloaded in {elapsedMs} ms",
+                archive.RootFolder, archive.FileCount, stopwatch.ElapsedMilliseconds);
+            return archive;
+        }
+        catch (Exception ex) when (ex is not EvidenceSourceException)
+        {
+            logger.LogCritical(ex, "Unable to download repository archive after {elapsedMs} ms: {message}", stopwatch.ElapsedMilliseconds, ex.Message);
+            throw new EvidenceSourceTransientException(ErrorKeyTemp, "Bank endpoints are currently unavailable", ex);
+        }
+    }
+
+    /// <summary>
+    /// Runs one rebuild step. Anything unexpected (malformed CSV or JSON, ...) is logged once with its root cause and
+    /// surfaced as a transient evidence source error; errors that already are evidence source errors pass through.
+    /// </summary>
+    private T Rebuild<T>(string step, string unavailableMessage, Func<T> build)
     {
         try
         {
-            var file = await GetFileFromGithub(resourceFilePath);
-            var engine = new DelimitedFileEngine<EndpointV2>(Encoding.UTF8);
-            var endpoints = engine.ReadString(file).ToList();
+            return build();
+        }
+        catch (Exception ex) when (ex is not EvidenceSourceException)
+        {
+            logger.LogCritical(ex, "Unable to rebuild {step}: {message}", step, ex.Message);
+            throw new EvidenceSourceTransientException(ErrorKeyTemp, unavailableMessage, ex);
+        }
+    }
 
-            List<EndpointExternal> result = [];
-            logger.LogInformation("{resourceName} parsed from {resourceFile} csv - {totalRecords} to be cached with key {cacheKey}", 
-                resourceName, resourceFilePath, engine.TotalRecords, cacheKey);
+    private ControlInformationSnapshot BuildAndStoreControlInformation(RepositoryArchive archive) =>
+        Rebuild("control information cache", "Bank endpoints are currently unavailable", () =>
+        {
+            var limitationsByOrgNo = ReadAllLimitations(archive);
+            var endpoints = ReadEndpoints(archive, settings.EndpointsResourceFile, "Bank endpoints", allowEmpty: false);
 
-            if (engine.TotalRecords > 0 && endpoints.Count > 0)
+            foreach (var endpoint in endpoints)
             {
-                result = memCache.SetEndpointsCache(cacheKey, endpoints, TimeSpan.FromMinutes(300));
-                logger.LogInformation("Cache refresh completed for {resourceName} ({cacheKey}) - total of {totalRecords} cached", 
-                    resourceName, cacheKey, engine.TotalRecords);
+                endpoint.Limitations = limitationsByOrgNo.TryGetValue(endpoint.OrgNo, out var found) ? found.ToList() : [];
+            }
+
+            memCache.TryGet(ControlInformationKey, out ControlInformationSnapshot previous);
+            var snapshot = memCache.Set(ControlInformationKey, new ControlInformationSnapshot
+            {
+                Endpoints = endpoints,
+                LimitationsByOrgNo = limitationsByOrgNo,
+                RefreshedAt = timeProvider.GetUtcNow(),
+                Source = archive.RootFolder
+            });
+
+            var totalLimitations = limitationsByOrgNo.Values.Sum(l => l.Count);
+            if (previous == null)
+            {
+                logger.LogInformation(
+                    "Control information cache built in this instance from {source}: {endpointCount} endpoints ({activeCount} active), {limitationCount} limitations for {limitationOrgCount} organisations",
+                    snapshot.Source, endpoints.Count, endpoints.Count(IsActiveEndpoint), totalLimitations, limitationsByOrgNo.Count);
             }
             else
             {
-                logger.LogCritical("Plugin func-esbits no {resourceName} found in csv for {resourceFile}", resourceName, resourceFilePath);
+                logger.LogInformation(
+                    "Control information cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}, limitations {previousLimitationCount} -> {limitationCount} for {previousOrgCount} -> {limitationOrgCount} organisations",
+                    previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
+                    (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes,
+                    previous.Endpoints.Count, endpoints.Count,
+                    previous.LimitationsByOrgNo.Values.Sum(l => l.Count), totalLimitations,
+                    previous.LimitationsByOrgNo.Count, limitationsByOrgNo.Count);
             }
 
-            return result;
-        }
-        catch (Exception ex)
-        {
-            logger.LogCritical(ex, "Unable to fetch or parse {resourceName} from {resourceFile}: {message}", 
-                resourceName, resourceFilePath, ex.Message);
-            throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable", ex);
-        }
-    }
+            return snapshot;
+        });
 
-    private async Task<IReadOnlyList<Limitation>> ReadLimitationsFromGithubAndCache(string resourceFile, string orgNo, string cacheKey, string resourceName)
-    {
-        try
+    private PantUtleggSnapshot BuildAndStorePantUtlegg(RepositoryArchive archive) =>
+        Rebuild("PantUtlegg cache", "PantUtlegg endpoints are currently unavailable", () =>
         {
-            var file = await GetFileFromGithub(resourceFile + $"{orgNo}.json", allowNotFound: true);
-            if (file == null)
+            // PantUtlegg has no participating banks yet in prod, so a header-only CSV is a valid, empty list.
+            var endpoints = ReadEndpoints(archive, settings.PantUtleggResourceFile, "PantUtlegg endpoints", allowEmpty: true);
+            memCache.TryGet(PantUtleggKey, out PantUtleggSnapshot previous);
+            var snapshot = memCache.Set(PantUtleggKey, new PantUtleggSnapshot
             {
-                logger.LogInformation("No {resourceName} file found on GitHub for {orgNo} at {resourceFile}", resourceName, orgNo, resourceFile);
-                return memCache.SetLimitationsCache(cacheKey, [], TimeSpan.FromMinutes(300));
+                Endpoints = endpoints,
+                RefreshedAt = timeProvider.GetUtcNow(),
+                Source = archive.RootFolder
+            });
+
+            if (previous == null)
+            {
+                logger.LogInformation("PantUtlegg cache built in this instance from {source}: {endpointCount} endpoints", snapshot.Source, endpoints.Count);
             }
-            
+            else
+            {
+                logger.LogInformation(
+                    "PantUtlegg cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}",
+                    previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
+                    (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes, previous.Endpoints.Count, endpoints.Count);
+            }
 
-            var limitations = JsonConvert.DeserializeObject<List<Limitation>>(file) ?? [];
-            var result = memCache.SetLimitationsCache(cacheKey, limitations, TimeSpan.FromMinutes(300));
-            logger.LogInformation("Cache refresh completed for {resourceName} ({cacheKey}) - total of {totalRecords} cached",
-                resourceName, cacheKey, limitations.Count);
+            return snapshot;
+        });
 
-            return result;
-        }
-        catch (Exception ex)
+    /// <summary>
+    /// Parses an endpoints CSV from the archive. With <paramref name="allowEmpty"/> false, a CSV without data rows fails the
+    /// rebuild so the previous snapshot is kept rather than replaced by an empty one.
+    /// </summary>
+    private List<EndpointExternal> ReadEndpoints(RepositoryArchive archive, string resourceFilePath, string resourceName, bool allowEmpty)
+    {
+        if (string.IsNullOrWhiteSpace(resourceFilePath) || !archive.TryGetFile(resourceFilePath, out var file))
         {
-            logger.LogCritical(ex, "Unable to fetch or parse {resourceName} for {orgNo} from {resourceFile}: {message}",
-                resourceName, orgNo, resourceFile, ex.Message);
-            throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable", ex);
+            logger.LogCritical("{resourceName} file {resourceFile} not found in repository archive {rootFolder}",
+                resourceName, resourceFilePath, archive.RootFolder);
+            throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable");
         }
+
+        var engine = new DelimitedFileEngine<EndpointV2>(Encoding.UTF8);
+        var endpoints = engine.ReadString(file).ToList();
+
+        logger.LogInformation("{resourceName} parsed from {resourceFile} csv - {totalRecords} records",
+            resourceName, resourceFilePath, engine.TotalRecords);
+
+        if (endpoints.Count == 0)
+        {
+            if (!allowEmpty)
+            {
+                logger.LogCritical("Plugin func-esbits no {resourceName} found in csv for {resourceFile}", resourceName, resourceFilePath);
+                throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable");
+            }
+
+            logger.LogWarning("No {resourceName} in csv {resourceFile} - caching an empty list", resourceName, resourceFilePath);
+        }
+
+        var env = settings.UseTestEndpoints ? "test" : "prod";
+        return endpoints.Select(endpoint => new EndpointExternal
+        {
+            Env = env,
+            Url = endpoint.Url,
+            Name = endpoint.Navn,
+            OrgNo = endpoint.OrgNummer,
+            Version = endpoint.Version,
+            ToDate = endpoint.ToDate,
+            FromDate = endpoint.FromDate
+        }).ToList();
     }
 
-    private async Task<string> GetFileFromGithub(string filePath, bool allowNotFound = false)
+    /// <summary>
+    /// Reads every "{orgNo}.json" in the limitations folder of the archive. Dot-files such as the export manifest are skipped.
+    /// </summary>
+    private IReadOnlyDictionary<string, IReadOnlyList<Limitation>> ReadAllLimitations(RepositoryArchive archive)
     {
-        var url = $"https://api.github.com/repos/data-altinn-no/bits/contents/{filePath}";
+        var result = new Dictionary<string, IReadOnlyList<Limitation>>();
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.GithubPat);
-        request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
-        request.Headers.UserAgent.ParseAdd("plugin-bits");
-
-        var response = await client.SendAsync(request);
-
-        if (response.IsSuccessStatusCode)
+        if (string.IsNullOrWhiteSpace(settings.LimitationsResourceFile))
         {
-            return await response.Content.ReadAsStringAsync();
+            logger.LogWarning("LimitationsResourceFile is not configured - no limitations will be cached");
+            return result;
         }
 
-        if (allowNotFound && response.StatusCode == HttpStatusCode.NotFound)
+        var files = archive.FilesInDirectory(settings.LimitationsResourceFile)
+            .Where(file => file.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && !file.Name.StartsWith('.'))
+            .ToList();
+
+        foreach (var (name, content) in files)
         {
-            return null;
+            result[Path.GetFileNameWithoutExtension(name)] = JsonConvert.DeserializeObject<List<Limitation>>(content) ?? [];
         }
 
-        logger.LogCritical("Github retrieval failed for {filePath}, status code: {StatusCode}, reason: {ReasonPhrase}",
-            filePath, response.StatusCode, response.ReasonPhrase);
-        throw new EvidenceSourceTransientException(ErrorKeyTemp, "Banking endpoints are currently unavailable");
+        logger.LogInformation("Parsed {fileCount} limitation files from {directory}", files.Count, settings.LimitationsResourceFile);
+        return result;
+    }
+
+    private bool IsActiveEndpoint(EndpointExternal x)
+    {
+        var now = timeProvider.GetUtcNow();
+        return (x.FromDate == null || x.FromDate <= now) && (x.ToDate == null || x.ToDate >= now);
     }
 }

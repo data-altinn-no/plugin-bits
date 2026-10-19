@@ -13,6 +13,11 @@
     "SafeHttpClientTimeout": "30",
     "GithubPatName": "",
     "KeyVaultName": "",
-    "EndpointsResourceFile": ""
+    "EndpointsResourceFile": "test/Banker_Kontroll_test.csv",
+    "PantUtleggResourceFile": "test/Banker_Pantutlegg_test.csv",
+    "LimitationsResourceFile": "test/limitations/",
+    "CacheSoftTtlMinutes": "60",
+    "GithubPat": "",
+    "UseTestEndpoints": "true"
   }
 }
