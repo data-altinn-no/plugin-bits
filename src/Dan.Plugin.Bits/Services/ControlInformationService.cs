@@ -179,8 +179,12 @@ public class ControlInformationService(
             try
             {
                 var archive = await DownloadArchive();
-                BuildAndStoreControlInformation(archive);
-                BuildAndStorePantUtlegg(archive);
+
+                // Build both before publishing either, so a failure leaves both caches unchanged.
+                var controlInformation = BuildControlInformation(archive);
+                var pantUtlegg = BuildPantUtlegg(archive);
+                StoreControlInformation(controlInformation);
+                StorePantUtlegg(pantUtlegg);
             }
             finally
             {
@@ -268,6 +272,12 @@ public class ControlInformationService(
     }
 
     private ControlInformationSnapshot BuildAndStoreControlInformation(RepositoryArchive archive) =>
+        StoreControlInformation(BuildControlInformation(archive));
+
+    private PantUtleggSnapshot BuildAndStorePantUtlegg(RepositoryArchive archive) =>
+        StorePantUtlegg(BuildPantUtlegg(archive));
+
+    private ControlInformationSnapshot BuildControlInformation(RepositoryArchive archive) =>
         Rebuild("control information cache", "Bank endpoints are currently unavailable", () =>
         {
             var limitationsByOrgNo = ReadAllLimitations(archive);
@@ -278,63 +288,78 @@ public class ControlInformationService(
                 endpoint.Limitations = limitationsByOrgNo.TryGetValue(endpoint.OrgNo, out var found) ? found.ToList() : [];
             }
 
-            memCache.TryGet(ControlInformationKey, out ControlInformationSnapshot previous);
-            var snapshot = memCache.Set(ControlInformationKey, new ControlInformationSnapshot
+            return new ControlInformationSnapshot
             {
                 Endpoints = endpoints,
                 LimitationsByOrgNo = limitationsByOrgNo,
                 RefreshedAt = timeProvider.GetUtcNow(),
                 Source = archive.RootFolder
-            });
-
-            var totalLimitations = limitationsByOrgNo.Values.Sum(l => l.Count);
-            if (previous == null)
-            {
-                logger.LogInformation(
-                    "Control information cache built in this instance from {source}: {endpointCount} endpoints ({activeCount} active), {limitationCount} limitations for {limitationOrgCount} organisations",
-                    snapshot.Source, endpoints.Count, endpoints.Count(IsActiveEndpoint), totalLimitations, limitationsByOrgNo.Count);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "Control information cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}, limitations {previousLimitationCount} -> {limitationCount} for {previousOrgCount} -> {limitationOrgCount} organisations",
-                    previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
-                    (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes,
-                    previous.Endpoints.Count, endpoints.Count,
-                    previous.LimitationsByOrgNo.Values.Sum(l => l.Count), totalLimitations,
-                    previous.LimitationsByOrgNo.Count, limitationsByOrgNo.Count);
-            }
-
-            return snapshot;
+            };
         });
 
-    private PantUtleggSnapshot BuildAndStorePantUtlegg(RepositoryArchive archive) =>
+    private PantUtleggSnapshot BuildPantUtlegg(RepositoryArchive archive) =>
         Rebuild("PantUtlegg cache", "PantUtlegg endpoints are currently unavailable", () =>
         {
             // PantUtlegg has no participating banks yet in prod, so a header-only CSV is a valid, empty list.
             var endpoints = ReadEndpoints(archive, settings.PantUtleggResourceFile, "PantUtlegg endpoints", allowEmpty: true);
-            memCache.TryGet(PantUtleggKey, out PantUtleggSnapshot previous);
-            var snapshot = memCache.Set(PantUtleggKey, new PantUtleggSnapshot
+
+            return new PantUtleggSnapshot
             {
                 Endpoints = endpoints,
                 RefreshedAt = timeProvider.GetUtcNow(),
                 Source = archive.RootFolder
-            });
-
-            if (previous == null)
-            {
-                logger.LogInformation("PantUtlegg cache built in this instance from {source}: {endpointCount} endpoints", snapshot.Source, endpoints.Count);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "PantUtlegg cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}",
-                    previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
-                    (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes, previous.Endpoints.Count, endpoints.Count);
-            }
-
-            return snapshot;
+            };
         });
+
+    /// <summary>
+    /// Publishes a built snapshot and logs how it differs from the one it replaces. Building and publishing are
+    /// separate steps so <see cref="RefreshAll"/> can build both snapshots first and publish neither if either fails.
+    /// </summary>
+    private ControlInformationSnapshot StoreControlInformation(ControlInformationSnapshot snapshot)
+    {
+        memCache.TryGet(ControlInformationKey, out ControlInformationSnapshot previous);
+        memCache.Set(ControlInformationKey, snapshot);
+
+        var totalLimitations = snapshot.LimitationsByOrgNo.Values.Sum(l => l.Count);
+        if (previous == null)
+        {
+            logger.LogInformation(
+                "Control information cache built in this instance from {source}: {endpointCount} endpoints ({activeCount} active), {limitationCount} limitations for {limitationOrgCount} organisations",
+                snapshot.Source, snapshot.Endpoints.Count, snapshot.Endpoints.Count(IsActiveEndpoint), totalLimitations, snapshot.LimitationsByOrgNo.Count);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Control information cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}, limitations {previousLimitationCount} -> {limitationCount} for {previousOrgCount} -> {limitationOrgCount} organisations",
+                previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
+                (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes,
+                previous.Endpoints.Count, snapshot.Endpoints.Count,
+                previous.LimitationsByOrgNo.Values.Sum(l => l.Count), totalLimitations,
+                previous.LimitationsByOrgNo.Count, snapshot.LimitationsByOrgNo.Count);
+        }
+
+        return snapshot;
+    }
+
+    private PantUtleggSnapshot StorePantUtlegg(PantUtleggSnapshot snapshot)
+    {
+        memCache.TryGet(PantUtleggKey, out PantUtleggSnapshot previous);
+        memCache.Set(PantUtleggKey, snapshot);
+
+        if (previous == null)
+        {
+            logger.LogInformation("PantUtlegg cache built in this instance from {source}: {endpointCount} endpoints", snapshot.Source, snapshot.Endpoints.Count);
+        }
+        else
+        {
+            logger.LogInformation(
+                "PantUtlegg cache refreshed: {previousSource} -> {source} ({changed}); previous snapshot was {previousAgeMinutes:F0} min old; endpoints {previousEndpointCount} -> {endpointCount}",
+                previous.Source, snapshot.Source, previous.Source == snapshot.Source ? "same commit, data unchanged" : "new commit",
+                (snapshot.RefreshedAt - previous.RefreshedAt).TotalMinutes, previous.Endpoints.Count, snapshot.Endpoints.Count);
+        }
+
+        return snapshot;
+    }
 
     /// <summary>
     /// Parses an endpoints CSV from the archive. With <paramref name="allowEmpty"/> false, a CSV without data rows fails the

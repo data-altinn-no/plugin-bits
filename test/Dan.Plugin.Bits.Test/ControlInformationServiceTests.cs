@@ -301,6 +301,25 @@ public class ControlInformationServiceTests
     }
 
     [Fact]
+    public async Task RefreshAll_publishes_nothing_when_one_of_the_builds_fails()
+    {
+        var service = CreateService();
+        await service.RefreshAll();
+
+        // New commit with updated limitations but without the PantUtlegg file: the whole refresh must be rejected.
+        _github.DownloadRepositoryArchive().Returns(Task.FromResult(Zip(files =>
+        {
+            files["test/limitations/111111111.json"] = LimitationJson("L1-updated");
+            files.Remove(PantUtleggFile);
+        })));
+
+        await Assert.ThrowsAsync<EvidenceSourceTransientException>(() => service.RefreshAll());
+
+        Assert.Equal("L1", Assert.Single(await service.GetBankLimitations("111111111")).LimitationId);
+        Assert.Equal("555555555", Assert.Single(await service.GetPantUtlegg()).OrgNo);
+    }
+
+    [Fact]
     public async Task Fresh_snapshot_does_not_trigger_a_background_refresh()
     {
         var service = CreateService(softTtlMinutes: 60);
@@ -318,12 +337,14 @@ public class ControlInformationServiceTests
     {
         var service = CreateService(softTtlMinutes: 60);
         await service.GetBankEndpointsWithDates();
-        _github.DownloadRepositoryArchive().Returns(Task.FromResult(Zip(files =>
-            files["test/limitations/111111111.json"] = LimitationJson("L1-updated"))));
+        // Hold the background download until every stale request has been answered, so the test is deterministic.
+        var download = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.DownloadRepositoryArchive().Returns(download.Task);
         _clock.Advance(TimeSpan.FromMinutes(61));
 
         // Many stale requests at once: all answered from the old snapshot, exactly one background download.
         var served = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => service.GetBankLimitations("111111111")));
+        download.SetResult(Zip(files => files["test/limitations/111111111.json"] = LimitationJson("L1-updated")));
         await service.ControlInformationBackgroundRefresh;
 
         Assert.All(served, limitations => Assert.Equal("L1", Assert.Single(limitations).LimitationId));
