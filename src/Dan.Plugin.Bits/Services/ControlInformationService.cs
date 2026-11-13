@@ -387,8 +387,8 @@ public class ControlInformationService(
                 logger.LogCritical("Plugin func-esbits no {resourceName} found in csv for {resourceFile}", resourceName, resourceFilePath);
                 throw new EvidenceSourceTransientException(ErrorKeyTemp, $"{resourceName} are currently unavailable");
             }
-
-            logger.LogWarning("No {resourceName} in csv {resourceFile} - caching an empty list", resourceName, resourceFilePath);
+            //File exists, but is empty
+            logger.LogInformation("No {resourceName} in csv {resourceFile} - caching an empty list", resourceName, resourceFilePath);
         }
 
         var env = settings.UseTestEndpoints ? "test" : "prod";
